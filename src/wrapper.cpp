@@ -1,22 +1,15 @@
-
 #include <iostream>
 
-/* Boost library */
-// https://github.com/avast/boost-python-examples/blob/master/boost-python-examples/boost-python-examples.cpp
-#include <boost/python.hpp>
-#include <boost/python/numpy.hpp>
-#include <boost/scoped_array.hpp>
-#include <boost/python/wrapper.hpp>
-#include <boost/python/module.hpp>
-#include <boost/python/call.hpp>
+#include <pybind11/pybind11.h>
+#include <pybind11/numpy.h>
+#include <pybind11/stl.h>
 
 #include "biqbin_cpp_api.h"
 #include "blas_laplack.h"
 
 #include "wrapper.h"
 
-namespace np = boost::python::numpy;
-namespace p = boost::python;
+namespace py = pybind11;
 
 /* biqbin's global variables from global_var.h */
 extern Problem *SP;
@@ -30,19 +23,19 @@ double running_time;
 int rank;
 
 // Global Python override function (if any)
-p::object python_heuristic_override;
-p::object py_read_data_override;
+py::object python_heuristic_override;
+py::object py_read_data_override;
 
 /// @brief set heuristic function from Python
 /// @param func
-void set_heuristic_override(p::object func)
+void set_heuristic_override(py::object func)
 {
     python_heuristic_override = func;
 }
 
 /// @brief set instance reading function from Python
 /// @param func
-void set_read_data_override(p::object func)
+void set_read_data_override(py::object func)
 {
     py_read_data_override = func;
 }
@@ -60,8 +53,8 @@ int get_rank()
 /// @brief TODO: find a better fix for conflicts with MPI
 void clean_python_references(void)
 {
-    py_read_data_override = p::object(); // Clear the callback
-    python_heuristic_override = p::object();
+    py_read_data_override = py::object(); // Clear the callback
+    python_heuristic_override = py::object();
 }
 
 /// @brief Helper functions for better error messages
@@ -78,57 +71,59 @@ const char *type_name<int>() { return "int32"; }
 /// @tparam T either a double or int
 /// @param np_in numpy array passed in
 /// @param dimensions checks the shape of the np array
-template <typename T>
-void check_np_array_validity(const np::ndarray &np_in, int dimensions, const std::string &np_array_name = "")
-{
-    // Check dtype
-    if (np_in.get_dtype() != np::dtype::get_builtin<T>())
-    {
-        std::string msg = np_array_name + " - Incorrect array data type: expected " + std::string(type_name<T>());
-        PyErr_SetString(PyExc_TypeError, msg.c_str());
-        p::throw_error_already_set();
-    }
-    // Check number of dimensions
-    if (np_in.get_nd() != dimensions)
-    {
-        std::string msg = np_array_name + " - Incorrect number of dimensions: expected " +
-                          std::to_string(dimensions) + ", got " + std::to_string(np_in.get_nd());
-        PyErr_SetString(PyExc_TypeError, msg.c_str());
-        p::throw_error_already_set();
-    }
-
-    // If 2D, check for square shape
-    if (dimensions == 2 && np_in.shape(0) != np_in.shape(1))
-    {
-        std::string msg = np_array_name + " - Incorrect shape: expected a square (n x n) array, got a (" +
-                          std::to_string(np_in.shape(0)) + " x " + std::to_string(np_in.shape(1)) + " )";
-        PyErr_SetString(PyExc_ValueError, msg.c_str());
-        p::throw_error_already_set();
-    }
-
-    // Check row-major contiguous
-    if (!(np_in.get_flags() & np::ndarray::C_CONTIGUOUS))
-    {
-        std::string msg = np_array_name + " - Array must be row-major contiguous";
-        PyErr_SetString(PyExc_TypeError, msg.c_str());
-        p::throw_error_already_set();
-    }
-}
+//template <typename T>
+//void check_np_array_validity(const py::array_t &np_in, int dimensions, const std::string &np_array_name = "")
+//{
+//    // Check dtype
+//    if (np_in.get_dtype() != np::dtype::get_builtin<T>())
+//    {
+//        std::string msg = np_array_name + " - Incorrect array data type: expected " + std::string(type_name<T>());
+//        PyErr_SetString(PyExc_TypeError, msg.c_str());
+//        p::throw_error_already_set();
+//    }
+//    // Check number of dimensions
+//    if (np_in.get_nd() != dimensions)
+//    {
+//        std::string msg = np_array_name + " - Incorrect number of dimensions: expected " +
+//                          std::to_string(dimensions) + ", got " + std::to_string(np_in.get_nd());
+//        PyErr_SetString(PyExc_TypeError, msg.c_str());
+//        p::throw_error_already_set();
+//    }
+//
+//    // If 2D, check for square shape
+//    if (dimensions == 2 && np_in.shape(0) != np_in.shape(1))
+//    {
+//        std::string msg = np_array_name + " - Incorrect shape: expected a square (n x n) array, got a (" +
+//                          std::to_string(np_in.shape(0)) + " x " + std::to_string(np_in.shape(1)) + " )";
+//        PyErr_SetString(PyExc_ValueError, msg.c_str());
+//        p::throw_error_already_set();
+//    }
+//
+//    // Check row-major contiguous
+//    if (!(np_in.get_flags() & np::ndarray::C_CONTIGUOUS))
+//    {
+//        std::string msg = np_array_name + " - Array must be row-major contiguous";
+//        PyErr_SetString(PyExc_TypeError, msg.c_str());
+//        p::throw_error_already_set();
+//    }
+//}
 
 /// @brief Creates a numpy array of the solution, returned after biqbin is done solving
 /// @return np.ndarray(dtype = np.int32) of the final solution (node names in a np list)
-np::ndarray get_selected_nodes_np_array()
+py::array_t<int> get_selected_nodes_np_array()
 {
-    // Create NumPy array to return to user
-    np::dtype dtype = np::dtype::get_builtin<int>();
-    p::tuple shape = p::make_tuple(selected_nodes.size());
+    ssize_t              ndim    = 1;
+    std::vector<long unsigned int> shape   = {selected_nodes.size()};
+    std::vector<ssize_t> strides = {sizeof(int)};
 
-    // Allocate NumPy array
-    np::ndarray result = np::zeros(shape, dtype);
-    for (int i = 0; i < static_cast<int>(selected_nodes.size()); ++i)
-    {
-        result[i] = selected_nodes[i];
-    }
+    py::array_t<int> result(py::buffer_info(
+        selected_nodes.data(),
+        sizeof(int),
+        py::format_descriptor<int>::format(),
+        ndim,
+        shape,
+        strides
+    ));
     return result;
 }
 
@@ -141,7 +136,7 @@ np::ndarray get_selected_nodes_np_array()
 /// @param problem_instance_name argv[1] "problem_path_to_file"
 /// @param params_file_name argv[2] "path_to_params_file"
 /// @return biqbin maxcut result
-p::dict run_py(char *prog_name, char *problem_instance_name, char *params_file_name)
+py::dict run_py(char *prog_name, char *problem_instance_name, char *params_file_name)
 {
     char *argv[3] = {prog_name, problem_instance_name, params_file_name};
 
@@ -149,7 +144,7 @@ p::dict run_py(char *prog_name, char *problem_instance_name, char *params_file_n
     clean_python_references(); // TODO: handle python references better
 
     // Build result dictionary
-    p::dict result_dict, nested;
+    py::dict result_dict, nested;
     result_dict["time"] = running_time;
     result_dict["maxcut"] = nested;
     result_dict["maxcut"]["computed_val"] = Bab_LBGet();
@@ -158,24 +153,24 @@ p::dict run_py(char *prog_name, char *problem_instance_name, char *params_file_n
 }
 
 double run_heuristic_python(
-    const np::ndarray &P0_L_array,
-    const np::ndarray &P_L_array,
-    const np::ndarray &xfixed_array,
-    const np::ndarray &node_sol_X_array,
-    const np::ndarray &x_array)
+    const py::array &P0_L_array,
+    const py::array &P_L_array,
+    const py::array &xfixed_array,
+    const py::array &node_sol_X_array,
+    const py::array &x_array)
 {
     // Check if input is valid
-    check_np_array_validity<double>(P0_L_array, 2, "P0_L");
-    check_np_array_validity<double>(P_L_array, 2, "P_L");
-    check_np_array_validity<int>(xfixed_array, 1, "xfixed");
-    check_np_array_validity<int>(node_sol_X_array, 1, "node_sol_x");
-    check_np_array_validity<int>(x_array, 1, "x");
+    //check_np_array_validity<double>(P0_L_array, 2, "P0_L");
+    //check_np_array_validity<double>(P_L_array, 2, "P_L");
+    //check_np_array_validity<int>(xfixed_array, 1, "xfixed");
+    //check_np_array_validity<int>(node_sol_X_array, 1, "node_sol_x");
+    //check_np_array_validity<int>(x_array, 1, "x");
 
-    double *P0_L = reinterpret_cast<double *>(P0_L_array.get_data());
-    double *P_L = reinterpret_cast<double *>(P_L_array.get_data());
-    int *xfixed = reinterpret_cast<int *>(xfixed_array.get_data());
-    int *node_sol_X = reinterpret_cast<int *>(node_sol_X_array.get_data());
-    int *x = reinterpret_cast<int *>(x_array.get_data());
+    double *P0_L = reinterpret_cast<double *>(P0_L_array.ptr());
+    double *P_L = reinterpret_cast<double *>(P_L_array.ptr());
+    int *xfixed = reinterpret_cast<int *>(xfixed_array.ptr());
+    int *node_sol_X = reinterpret_cast<int *>(node_sol_X_array.ptr());
+    int *x = reinterpret_cast<int *>(x_array.ptr());
 
     return runHeuristic_unpacked(P0_L, P0_L_array.shape(0), P_L, P_L_array.shape(0), xfixed, node_sol_X, x);
 }
@@ -187,50 +182,85 @@ double run_heuristic_python(
 /// @param x stores the best solution nodes found the by the heuristic function
 /// @return best lower bound of the current subproblem found by the heuristic used
 double wrapped_heuristic(Problem *P0, Problem *P, BabNode *node, int *x)
-{
-    np::ndarray P0_L_array = np::from_data(P0->L, np::dtype::get_builtin<double>(),
-                                           p::make_tuple(P0->n, P0->n),
-                                           p::make_tuple(sizeof(double) * P0->n, sizeof(double)),
-                                           p::object());
+{ 
+    py::array_t<double> P0_L_array(py::buffer_info(
+        P0->L,
+        sizeof(double),
+        py::format_descriptor<double>::format(),
+        2,
+        {P0->n, P0->n},
+        {sizeof(double) * P0->n, sizeof(double)}
+    ));
 
-    np::ndarray P_L_array = np::from_data(P->L, np::dtype::get_builtin<double>(),
-                                          p::make_tuple(P->n, P->n),
-                                          p::make_tuple(sizeof(double) * P->n, sizeof(double)),
-                                          p::object());
+    py::array_t<double> P_L_array = py::array(py::buffer_info(
+        P->L,
+        sizeof(double),
+        py::format_descriptor<double>::format(),
+        2, // ndim
+        {P->n, P->n},
+        {sizeof(double) * P->n, sizeof(double)}
+    ));
 
-    np::ndarray xfixed_array = np::from_data(node->xfixed, np::dtype::get_builtin<int>(),
-                                             p::make_tuple(P0->n - 1),
-                                             p::make_tuple(sizeof(int)),
-                                             p::object());
+    py::array_t<int> xfixed_array = py::array(py::buffer_info(
+        node->xfixed,
+        sizeof(int),
+        py::format_descriptor<int>::format(),
+        1, // ndim
+        {P0->n},
+        {sizeof(int)}
+    ));
 
-    np::ndarray sol_X_array = np::from_data(node->sol.X, np::dtype::get_builtin<int>(),
-                                            p::make_tuple(P0->n - 1),
-                                            p::make_tuple(sizeof(int)),
-                                            p::object());
+    py::array_t<int> sol_X_array = py::array(py::buffer_info(
+        node->sol.X,
+        sizeof(int),
+        py::format_descriptor<int>::format(),
+        1, // ndim
+        {P0->n - 1},
+        {sizeof(int)}
+    ));
 
-    np::ndarray x_array = np::from_data(x, np::dtype::get_builtin<int>(),
-                                        p::make_tuple(BabPbSize),
-                                        p::make_tuple(sizeof(int)),
-                                        p::object());
+    py::array_t<int> x_array = py::array(py::buffer_info(
+        x,
+        sizeof(int),
+        py::format_descriptor<int>::format(),
+        1, // ndim
+        {BabPbSize},
+        {sizeof(int)}
+    ));
 
     // RK https://wiki.python.org/moin/boost.python/extract
-    return p::extract<double>(python_heuristic_override(P0_L_array, P_L_array, xfixed_array, sol_X_array, x_array));
+    py::object heuristic_val = python_heuristic_override(
+        P0_L_array, 
+        P_L_array, 
+        xfixed_array, 
+        sol_X_array,
+        x_array
+    );
+    return heuristic_val.cast<double>(); 
 }
 
 /// @brief Read the instance problem file return the adjacency matrix
 /// @param instance path to instance file
 /// @return adjacency matrix
-np::ndarray read_data_python(const char *instance)
+py::array_t<double> read_data_python(const char *instance)
 {
     double *adj;
     int adj_N;
     adj = readData(instance, &adj_N); // readData exits the program if parsing fails.
+    
+    ssize_t              ndim    = 2;
+    std::vector<ssize_t> shape   = {adj_N, adj_N};
+    std::vector<long unsigned int> strides = {sizeof(double) * adj_N, sizeof(double)};
 
-    return np::from_data(adj,
-                         np::dtype::get_builtin<double>(),
-                         p::make_tuple(adj_N, adj_N),
-                         p::make_tuple(sizeof(double) * adj_N, sizeof(double)),
-                         p::object());
+    py::array_t<double> array(py::buffer_info(
+        adj,
+        sizeof(double),
+        py::format_descriptor<double>::format(),
+        ndim,
+        shape,
+        strides
+    ));
+    return array;
 }
 
 /// @brief Get an adjacency matrix from Python and set Problem *SP->L and *PP global variables
@@ -238,34 +268,36 @@ int wrapped_read_data()
 {
     // Declaration of np_adj before the try-catch, in case Python threw an error
     // https://live.boost.org/doc/libs/1_80_0/libs/python/doc/html/numpy/tutorial/ndarray.html
-    np::ndarray np_adj = np::array(p::make_tuple(0));
-
-    try
-    {
-        np_adj = p::extract<np::ndarray>(py_read_data_override());
-    }
-    catch (const boost::python::error_already_set&)
-    {
-        PyErr_Print();
-        std::exit(1);
-    }
-    check_np_array_validity<double>(np_adj, 2, "adj");
-    return process_adj_matrix(reinterpret_cast<double *>(np_adj.get_data()),
-                              np_adj.shape(0));
+    py::array np_adj = py_read_data_override();
+    //try
+    //{
+    //    np_adj = py::extract<py::array_t>(py_read_data_override());
+    //}
+    //catch (const boost::python::error_already_set&)
+    //{
+    //    PyErr_Print();
+    //    std::exit(1);
+    //}
+    //check_np_array_validity<double>(np_adj, 2, "adj");
+    int adj = process_adj_matrix(
+        reinterpret_cast<double *>(np_adj.ptr()),
+        np_adj.shape(0)
+    );
+    return adj;
 }
 
 // Python module exposure
-BOOST_PYTHON_MODULE(biqbin)
+PYBIND11_MODULE(biqbin, m)
 {
-    np::initialize();
+    m.doc() = "The biqbin binary optimization package.";
 
-    p::def("set_heuristic", &set_heuristic_override);
-    p::def("set_read_data", &set_read_data_override);
-    p::def("read_bqp_data", &read_data_BQP);
-    p::def("run", &run_py);
-    p::def("default_heuristic", &run_heuristic_python);
-    p::def("default_read_data", &read_data_python);
-    p::def("get_rank", &get_rank);
+    m.def("set_heuristic", &set_heuristic_override, "Override the heuristics used.");
+    m.def("set_read_data", &set_read_data_override, "Set read data.");
+    m.def("read_bqp_data", &read_data_BQP, "Read BQP.");
+    m.def("run", &run_py, "Run blabla.");
+    m.def("default_heuristic", &run_heuristic_python, "Get default heuristic.");
+    m.def("default_read_data", &read_data_python, "Read default data.");
+    m.def("get_rank", &get_rank, "Get the rank.");
 }
 
 /// @brief Copy the solution before memory is freed, so it can be retrieved in Python // RK ???
